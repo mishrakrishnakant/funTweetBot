@@ -5,7 +5,7 @@ import tweepy
 
 from tweepy import Stream
 
-import re,json
+import re,json,time, csv
 
 from config import CONSUMER_KEY,CONSUMER_SECRET,ACCESS_TOKEN,ACCESS_TOKENS_SECRET
 
@@ -24,47 +24,98 @@ class StdOutListener(StreamListener):
     """
     
     def on_data(self, data):
-
-    	#get the tweet text
-    	status_start=data.index("text\":")+len("text\":")
-    	status_end=data.index(",\"source",status_start)
-        status = data[status_start:status_end]
-
-        #filter the tweet by checking the first character for retweets
-
-        if status[1] <> "R":
-
-        	#Get the user id so that we can send request
-
-        	details = json.loads(data)
-
-        	userid=details["user"]["id"]
-
-        	screen_name=details["user"]["screen_name"]
-        	temp=api.create_friendship(userid)
-        	print(temp) #prints if sent friend request or not, can additionally follow if specified with the parameters
-        	return True
+        details = json.loads(data)
+        #Get the user id so that we can send request
+        userid=str(details["user"]["id"])
+        screen_name=details["user"]["screen_name"]
+        tweet_id=str(details["id_str"])
+        #temp=api.create_favorite(tweet_id) # Favorite tweets from trending topics
+        tweet_text=details["text"]
+        tweetrow=[[userid, screen_name,tweet_id,tweet_text.encode('utf-8')]]
+        with open("output.csv", "a") as myfile:
+            writer = csv.writer(myfile)
+            writer.writerows(tweetrow)
+            #myfile.write(u' '.join((userid, "\t",screen_name,"\t",tweet_id,"\t",tweet_text)).encode('utf-8').strip())
+        #print(details) #prints whatever we want it to print for current execution
+        return True
         	
     def retweet(self, async=False):
         return True
 
-    def on_error(self, status):
-        print(status)
+    def on_error(self, status_code):
+        print('Got an error with status code: ' + str(status_code))
+        return True # To continue listening
+ 
+    def on_timeout(self):
+        print('Timeout...')
+        return True # To continue listening
 
-#Streaming Class
+# Before streaming find all followers
 
-stream = Stream(auth, StdOutListener())
-stream.filter(track=['#IamABot','#Bot','#Robot','TalkToMe'],languages=['en'])
+class StdOutListenerFav(StreamListener):
+    """ A listener handles tweets that are received from the stream.
+    This is a basic listener that just prints received tweets to stdout.
+    """
+    
+    def on_data(self, data):
+        details = json.loads(data)
+        tweet_id=details["id_str"]
+        userid=details["user"]["id"]
+        temp=api.create_favorite(tweet_id) # Favorite tweets from trending topics
+        api.create_friendship(userid)
+        return True
 
-#This bot will reply to all bot in a streaming logic i.e., a worker application that does not need to be restarted constantly
+
+friend_id = []
+for page in tweepy.Cursor(api.friends_ids, screen_name="funTweetBot").pages():
+    friend_id.extend(page)
+    print("waiting")
+    time.sleep(2)
+
+#Find all my follows now
+
+follower_id =[]
+for page in tweepy.Cursor(api.followers_ids, screen_name="funTweetBot").pages():
+    follower_id.extend(page)
+    print("waiting")
+    time.sleep(2)
 
 
-# write a method to get a status for a certain keyword and extract status id
+# friendships with people who do not follow
+
+people_not_friend = list(set(friend_id) - set(follower_id))
+
+#api.update_status("I am going on an #unfollow streak now")
+#end friendship with them
+
+for friend_not_following in people_not_friend:
+    api.destroy_friendship(friend_not_following) 
+    #print(friend_not_following) # print id of the person with whose the friendship was destroyed
+
+# Find trending topics, selected area is USA with WOEID = 23424977
+
+#api.update_status("Let us see what is the most trending topics right now")
+
+api_results = api.trends_place(23424977,[])
+
+trend_names=[] # contains all current trends
+for location in api_results:
+    for trend in location["trends"]:
+        trend_names.append(trend["name"])
+        #print(trend_names)
+        #Streaming Class Inovccation
+        stream = Stream(auth, StdOutListener())
+
+        # create a separate stream for each invocation
+        stream.filter(track=trend["name"],languages=['en'])
 
 
-#retweet to that status
+#write logic to fav certain tweets, we will do that for tweets about olympics only and send friend request
 
-#send a friend request to them
+stream2= Stream(auth, StdOutListenerFav())
+stream2.filter(track=['rioolympics'],languages=['en'])
+
+
 
 
 #in future write a script that if someone was messaged and they responded,  we send them a DM or something on those lines
